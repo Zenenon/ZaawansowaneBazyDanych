@@ -1,0 +1,199 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-5">
+        <div class="card shadow-sm p-4">
+            <h4 class="mb-3 text-primary">Dodaj Wydarzenie</h4>
+            <form action="{{ url_for('create_event') }}" method="POST">
+                <div class="mb-3">
+                    <input type="text" name="name" class="form-control" placeholder="Nazwa koncertu" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-primary">Dodaj Wykonawców:</label>
+
+                    <div class="input-group mb-2">
+                        <input type="text" id="performer-search" list="performer-datalist" class="form-control" placeholder="Zacznij wpisywać nazwę artysty...">
+                        <button type="button" id="add-performer-btn" class="btn btn-outline-primary">Dodaj</button>
+                    </div>
+
+                    <datalist id="performer-datalist">
+                        {% for p in all_performers %}
+                        <option value="{{ p.name }}" data-id="{{ p.id }}">
+                        {% endfor %}
+                    </datalist>
+
+                    <div id="selected-performers-container" class="d-flex flex-wrap gap-2 mb-2">
+                        </div>
+
+                    <div id="hidden-inputs-container"></div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Wybierz Lokalizację:</label>
+                    <select name="venue_id" id="venue-select" class="form-select" required>
+                        <option value="">-- Wybierz miejsce --</option>
+                        {% for v in venues %}
+                        <option value="{{ v.id }}">{{ v.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div id="price-fields-container" class="mb-3 p-3 border rounded bg-light" style="display:none;">
+                    <label class="form-label small fw-bold text-success">Ceny biletów dla kategorii:</label>
+                    <div id="dynamic-prices"></div>
+                </div>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold text-muted">Start:</label>
+                        <input type="datetime-local" name="date_start" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold text-muted">Koniec (opcjonalnie):</label>
+                        <input type="datetime-local" name="date_end" class="form-control">
+                    </div>
+                </div>
+                
+                <div class="mb-3">
+                    <textarea name="description" class="form-control" placeholder="Opis wydarzenia..." rows="3"></textarea>
+                </div>
+
+                <button type="submit" class="btn btn-success w-100 fw-bold">Stwórz i generuj bilety</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="col-md-7">
+        <h4 class="mb-3">Lista Koncertów</h4>
+        <div class="table-responsive">
+            <table class="table table-hover bg-white shadow-sm rounded border">
+                <thead class="table-light">
+                    <tr>
+                        <th>Koncert / Artyści</th>
+                        <th>Miejsce</th>
+                        <th>Czas trwania</th>
+                        <th>Opis</th>
+                        <th>Bilety</th>
+                        <th>Akcja</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in wydarzenia %}
+                    <tr>
+                        <td>
+                            <strong>{{ e.name }}</strong><br>
+                            <small class="text-primary">{{ e.performers if e.performers else 'Brak przypisanych artystów' }}</small>
+                        </td>
+                        <td>{{ e.venue_name }}</td>
+                        <td>
+                            <small>
+                                <strong>Od:</strong> {{ e.date_start.strftime('%d.%m %H:%M') if e.date_start else '-' }}<br>
+                                <strong>Do:</strong> {{ e.date_end.strftime('%d.%m %H:%M') if e.date_end else '-' }}
+                            </small>
+                        </td>
+                        <td>
+                            <small class="text-muted" title="{{ e.description or '' }}">
+                                {{ (e.description or "Brak opisu") | truncate(50) }}
+                            </small>
+                        </td>
+                        <td>
+                            <span class="badge bg-primary">{{ e.available }}</span>
+                        </td>
+                        <td>
+                            <a href="{{ url_for('delete_event', event_id=e.id) }}"
+                               class="btn btn-danger btn-sm"
+                               onclick="return confirm('Usunąć?')">Usuń</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+const searchInput = document.getElementById('performer-search');
+const addBtn = document.getElementById('add-performer-btn');
+const container = document.getElementById('selected-performers-container');
+const hiddenContainer = document.getElementById('hidden-inputs-container');
+const datalist = document.getElementById('performer-datalist');
+
+addBtn.addEventListener('click', function() {
+    const name = searchInput.value;
+    // Szukamy ID w dataliście na podstawie wpisanej nazwy
+    const option = Array.from(datalist.options).find(opt => opt.value === name);
+
+    if (option) {
+        const id = option.getAttribute('data-id');
+
+        // Sprawdzamy, czy artysta nie został już dodany
+        if (document.getElementById(`perf-input-${id}`)) {
+            alert('Ten wykonawca jest już na liście!');
+            return;
+        }
+
+        // 1. Tworzymy wizualny TAG
+        const tag = document.createElement('span');
+        tag.className = 'badge bg-info text-dark p-2 d-flex align-items-center';
+        tag.innerHTML = `${name} <button type="button" class="btn-close btn-close-white ms-2" style="font-size: 0.5rem;" onclick="removePerformer('${id}', this)"></button>`;
+        container.appendChild(tag);
+
+        // 2. Tworzymy ukryty input dla Flask (przesyłany w POST)
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.name = 'performers'; // Flask odbierze to jako listę
+        hiddenInput.value = id;
+        hiddenInput.id = `perf-input-${id}`;
+        hiddenContainer.appendChild(hiddenInput);
+
+        // 3. Czyścimy pole wyszukiwania
+        searchInput.value = '';
+    } else {
+        alert('Wybierz wykonawcę z listy podpowiedzi!');
+    }
+});
+
+// Funkcja usuwania tagu
+function removePerformer(id, btn) {
+    btn.parentElement.remove(); // usuń tag
+    document.getElementById(`perf-input-${id}`).remove(); // usuń hidden input
+}
+</script>
+
+<script>
+document.getElementById('venue-select').addEventListener('change', function() {
+    const venueId = this.value;
+    const container = document.getElementById('price-fields-container');
+    const dynamicDiv = document.getElementById('dynamic-prices');
+
+    if (!venueId) {
+        container.style.display = 'none';
+        return;
+    }
+
+    // Wywołanie Twojego API w Pythonie
+    fetch(`/api/categories/${venueId}`)
+        .then(response => response.json())
+        .then(categories => {
+            dynamicDiv.innerHTML = '';
+            if (categories.length > 0) {
+                container.style.display = 'block';
+                categories.forEach(cat => {
+                    // Tworzymy pole dla KAŻDEJ UNIKALNEJ kategorii (DISTINCT w SQL to załatwia)
+                    dynamicDiv.innerHTML += `
+                        <div class="input-group mb-2">
+                            <span class="input-group-text bg-white" style="width: 45%">${cat}</span>
+                            <input type="number" name="price_${cat}" step="0.01" class="form-control" placeholder="Cena" required>
+                        </div>
+                    `;
+                });
+            } else {
+                container.style.display = 'block';
+                dynamicDiv.innerHTML = '<p class="text-danger small">Błąd: Brak miejsc w tej sali!</p>';
+            }
+        });
+});
+</script>
+{% endblock %}

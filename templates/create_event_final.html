@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+{% block content %}
+<h3>Tworzenie wydarzenia w: {{ venue_name }}</h3>
+<form action="{{ url_for('confirm_event') }}" method="POST">
+    <input type="hidden" name="venue_id" value="{{ venue_id }}">
+
+    <div class="mb-3">
+        <label>Nazwa wydarzenia:</label>
+        <input type="text" name="name" class="form-control" required>
+    </div>
+
+    <h5>Ustal ceny dla kategorii w tej sali:</h5>
+    {% for cat in categories %}
+    <div class="input-group mb-2">
+        <span class="input-group-text w-25">{{ cat.category }}</span>
+        <input type="number" name="price_{{ cat.category }}" step="0.01" class="form-control" placeholder="Cena za bilet" required>
+    </div>
+    {% endfor %}
+
+    <button type="submit" class="btn btn-success mt-3">Generuj Wydarzenie i Bilety</button>
+</form>
+{% endblock %}

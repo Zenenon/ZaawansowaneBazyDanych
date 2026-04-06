@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-sm mb-4 border-dark">
+            <div class="card-header bg-dark text-white fw-bold">Nowy Wykonawca</div>
+            <div class="card-body">
+                <form action="{{ url_for('manage_performers') }}" method="POST" class="d-flex gap-2">
+                    <input type="text" name="name" class="form-control" placeholder="Imię / Nazwa zespołu" required>
+                    <button type="submit" class="btn btn-success">Dodaj do bazy</button>
+                </form>
+            </div>
+        </div>
+
+        <h4>Lista Wykonawców</h4>
+        <table class="table table-hover bg-white shadow-sm rounded border">
+            <thead class="table-secondary">
+                <tr>
+                    <th style="width: 10%">ID</th>
+                    <th>Nazwa / Imię i Nazwisko</th>
+                    <th style="width: 30%" class="text-center">Akcje</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in performers %}
+                <tr>
+                    <td>{{ p.id }}</td>
+                    <td><strong>{{ p.name }}</strong></td>
+                    <td class="text-center">
+                        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editModal{{ p.id }}">
+                            Edytuj
+                        </button>
+
+                        <a href="{{ url_for('delete_performer', performer_id=p.id) }}"
+                           class="btn btn-outline-danger btn-sm"
+                           onclick="return confirm('Czy na pewno chcesz usunąć tego wykonawcę?')">
+                           Usuń
+                        </a>
+                    </td>
+                </tr>
+
+                <div class="modal fade" id="editModal{{ p.id }}" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <form action="{{ url_for('edit_performer', performer_id=p.id) }}" method="POST">
+                                <div class="modal-header">
+                                    <h5 class="modal-title">Edytuj Wykonawcę</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <label class="form-label">Nowa nazwa:</label>
+                                    <input type="text" name="name" class="form-control" value="{{ p.name }}" required>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+                                    <button type="submit" class="btn btn-primary">Zapisz zmiany</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

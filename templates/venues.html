@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-5">
+        <div class="card shadow border-primary mb-4">
+            <div class="card-header bg-primary text-white fw-bold">Nowa Lokalizacja z układem miejsc</div>
+            <div class="card-body">
+                <form action="{{ url_for('manage_venues') }}" method="POST">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Dane obiektu:</label>
+                        <input type="text" name="name" class="form-control mb-2" placeholder="Nazwa obiektu (np. Kino Relax)" required>
+                        <input type="text" name="address" class="form-control" placeholder="Adres">
+                    </div>
+
+                    <div class="mb-3 p-3 bg-light border rounded">
+                        <label class="form-label small fw-bold">Wymiary sali :</label>
+                        <div class="row g-2">
+                            <div class="col">
+                                <input type="number" name="rows" class="form-control" placeholder="Liczba rzędów" required min="1">
+                            </div>
+                            <div class="col">
+                                <input type="number" name="cols" class="form-control" placeholder="Liczba kolumn" required min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 fw-bold">Stwórz obiekt i wygeneruj miejsca</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="alert alert-info small shadow-sm">
+            💡 <strong>Wskazówka:</strong> Po stworzeniu sali, kliknij przycisk <strong>"Zarządzaj Układem"</strong> po prawej, aby zmienić wybrane rzędy na VIP lub inne standardy.
+        </div>
+    </div>
+
+    <div class="col-md-7">
+        <h4>Zapisane Obiekty</h4>
+        <div class="list-group shadow-sm">
+            {% for v in venues %}
+            <div class="list-group-item d-flex justify-content-between align-items-center p-3">
+                <div>
+                    <h5 class="mb-0"><strong>ID: {{ v.id }}</strong> - {{ v.name }}</h5>
+                    <small class="text-muted">{{ v.address }}</small>
+                </div>
+                <div class="btn-group">
+                    <a href="{{ url_for('venue_layout', venue_id=v.id) }}" class="btn btn-warning btn-sm fw-bold">Zarządzaj Układem</a>
+                    <a href="{{ url_for('delete_venue', venue_id=v.id) }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('Usunąć wszystko?')">Usuń</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card shadow border-primary">
+            <div class="card-header bg-primary text-white">Nowe Wydarzenie</div>
+            <div class="card-body">
+                <form action="{{ url_for('create_event') }}" method="POST">
+                    <div class="mb-3">
+                        <label class="fw-bold">Nazwa koncertu:</label>
+                        <input type="text" name="name" class="form-control" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="fw-bold text-danger">Wybierz Lokalizację:</label>
+                        <select name="venue_id" id="venue-select" class="form-select" required>
+                            <option value="">-- Wybierz salę, aby ustalić ceny --</option>
+                            {% for v in venues %}
+                            <option value="{{ v.id }}">{{ v.name }} (ID: {{ v.id }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div id="price-inputs-container" class="p-3 bg-light border rounded mb-3" style="display:none;">
+                        <p class="small text-muted">Ustal ceny dla kategorii w tej sali:</p>
+                        <div id="dynamic-fields"></div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="small fw-bold">Data rozpoczęcia:</label>
+                        <input type="datetime-local" name="date_start" class="form-control" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-success w-100">Stwórz Wydarzenie</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('venue-select').addEventListener('change', function() {
+    const venueId = this.value;
+    const container = document.getElementById('price-inputs-container');
+    const fieldsDiv = document.getElementById('dynamic-fields');
+
+    if (!venueId) {
+        container.style.display = 'none';
+        return;
+    }
+
+    // Pytamy nasz backend o kategorie dla tej sali
+    fetch(`/api/categories/${venueId}`)
+        .then(response => response.json())
+        .then(categories => {
+            fieldsDiv.innerHTML = ''; // Czyścimy stare pola
+            if (categories.length > 0) {
+                container.style.display = 'block';
+                categories.forEach(cat => {
+                    fieldsDiv.innerHTML += `
+                        <div class="input-group mb-2">
+                            <span class="input-group-text w-25">${cat}</span>
+                            <input type="number" name="price_${cat}" step="0.01" class="form-control" placeholder="Cena PLN" required>
+                        </div>
+                    `;
+                });
+            } else {
+                fieldsDiv.innerHTML = '<p class="text-danger small">Błąd: Ta sala nie ma jeszcze dodanych żadnych miejsc!</p>';
+                container.style.display = 'block';
+            }
+        });
+});
+</script>
+{% endblock %}
