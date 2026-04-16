@@ -1,0 +1,34 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2>Twój Koszyk</h2>
+{% if tickets %}
+<div class="card shadow-sm p-3">
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Wydarzenie</th>
+                <th>Miejsce</th>
+                <th>Cena</th>
+                <th>Rezerwacja do</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in tickets %}
+            <tr>
+                <td>{{ t.event_name }}</td>
+                <td>Rząd {{ t.seat_row }}, Miejsce {{ t.seat_number }}</td>
+                <td>{{ t.price }} PLN</td>
+                <td class="text-danger fw-bold">{{ t.reserved_until.strftime('%H:%M:%S') }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <form action="{{ url_for('buy_tickets') }}" method="POST">
+        <button type="submit" class="btn btn-success btn-lg w-100 mt-3">Kupuję i płacę</button>
+    </form>
+</div>
+{% else %}
+<div class="alert alert-info">Twój koszyk jest pusty lub rezerwacje wygasły.</div>
+<a href="/shop" class="btn btn-primary">Wróć do listy wydarzeń</a>
+{% endif %}
+{% endblock %}

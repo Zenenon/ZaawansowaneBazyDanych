@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -31,6 +32,126 @@ def cleanup_expired_reservations():
     finally:
         cur.close()
         conn.close()
+
+
+@app.route('/shop')
+def shop_index():
+    cleanup_expired_reservations()
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Pobieramy wydarzenia z informacją o wykonawcach
+    cur.execute('''
+                SELECT e.*, v.name as venue_name, STRING_AGG(p.name, ', ') as performers
+                FROM events e
+                         JOIN venues v ON e.venue_id = v.id
+                         LEFT JOIN event_performers ep ON e.id = ep.event_id
+                         LEFT JOIN performers p ON ep.performer_id = p.id
+                GROUP BY e.id, v.name
+                ORDER BY e.date_start
+                ''')
+    events = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template('shop_index.html', events=events)
+
+
+@app.route('/shop/event/<int:event_id>')
+def shop_event_details(event_id):
+    cleanup_expired_reservations()
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Pobieramy bilety i dane o miejscach
+    cur.execute('''
+                SELECT t.id as ticket_id, t.price, t.status, s.seat_row, s.seat_number, s.category
+                FROM tickets t
+                         JOIN seats s ON t.seat_id = s.id
+                WHERE t.event_id = %s
+                ORDER BY s.seat_row::int, s.seat_number
+                ''', (event_id,))
+    tickets = cur.fetchall()
+
+    cur.execute('SELECT name FROM events WHERE id = %s', (event_id,))
+    event_name = cur.fetchone()['name']
+
+    cur.close()
+    conn.close()
+    return render_template('shop_event.html', tickets=tickets, event_name=event_name, event_id=event_id)
+
+
+@app.route('/shop/reserve/<int:ticket_id>')
+def reserve_ticket(ticket_id):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Rezerwujemy na 10 minut
+    reserved_until = datetime.now() + timedelta(minutes=10)
+
+    cur.execute('''
+                UPDATE tickets
+                SET status         = 'reserved',
+                    reserved_until = %s
+                WHERE id = %s
+                  AND status = 'free' RETURNING event_id
+                ''', (reserved_until, ticket_id))
+
+    result = cur.fetchone()
+    if result:
+        conn.commit()
+        # Dodajemy do koszyka w sesji
+        if 'cart' not in session:
+            session['cart'] = []
+        session['cart'].append(ticket_id)
+        session.modified = True
+
+    cur.close()
+    conn.close()
+    return redirect(request.referrer)
+
+
+@app.route('/shop/cart')
+def view_cart():
+    cleanup_expired_reservations()
+    if 'cart' not in session or not session['cart']:
+        return render_template('shop_cart.html', tickets=[])
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Pobieramy dane biletów z koszyka, które nadal są zarezerwowane
+    cur.execute('''
+                SELECT t.id, t.price, e.name as event_name, s.seat_row, s.seat_number, t.reserved_until
+                FROM tickets t
+                         JOIN events e ON t.event_id = e.id
+                         JOIN seats s ON t.seat_id = s.id
+                WHERE t.id = ANY (%s)
+                  AND t.status = 'reserved'
+                ''', (session['cart'],))
+    tickets = cur.fetchall()
+    cur.close()
+    conn.close()
+    return render_template('shop_cart.html', tickets=tickets)
+
+
+@app.route('/shop/buy', methods=['POST'])
+def buy_tickets():
+    if 'cart' not in session or not session['cart']:
+        return redirect(url_for('shop_index'))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Finalizujemy: status 'sold' (lub inny z Twojej logiki, np. 'paid')
+    cur.execute('''
+                UPDATE tickets
+                SET status         = 'sold',
+                    reserved_until = NULL
+                WHERE id = ANY (%s)
+                  AND status = 'reserved'
+                ''', (session['cart'],))
+
+    conn.commit()
+    session['cart'] = []  # Czyścimy koszyk
+    cur.close()
+    conn.close()
+    return "<h3>Dziękujemy za zakup! Twoje bilety zostały wygenerowane.</h3><a href='/shop'>Powrót</a>"
 
 # --- GŁÓWNY PANEL (DASHBOARD) ---
 # 1. Strona Główna (Dashboard) - tylko podgląd

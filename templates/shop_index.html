@@ -1,0 +1,23 @@
+{% extends "layout.html" %}
+{% block content %}
+<h2 class="mb-4">Dostępne Wydarzenia</h2>
+<div class="row">
+    {% for e in events %}
+    <div class="col-md-4 mb-4">
+        <div class="card h-100 shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title fw-bold">{{ e.name }}</h5>
+                <p class="text-primary small mb-1">{{ e.performers }}</p>
+                <p class="card-text text-muted small">{{ e.description | truncate(100) }}</p>
+                <hr>
+                <p class="mb-0 small"><strong>Data:</strong> {{ e.date_start.strftime('%d.%m.%Y %H:%M') }}</p>
+                <p class="small"><strong>Miejsce:</strong> {{ e.venue_name }}</p>
+            </div>
+            <div class="card-footer bg-white border-top-0">
+                <a href="{{ url_for('shop_event_details', event_id=e.id) }}" class="btn btn-success w-100">Wybierz miejsce</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Wybierz bilet na: {{ event_name }}</h2>
+    <a href="{{ url_for('view_cart') }}" class="btn btn-outline-primary">🛒 Mój koszyk</a>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <table class="table table-sm align-middle text-center">
+            <thead>
+                <tr>
+                    <th>Rząd</th>
+                    <th>Numer</th>
+                    <th>Kategoria</th>
+                    <th>Cena</th>
+                    <th>Status</th>
+                    <th>Akcja</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in tickets %}
+                <tr class="{% if t.status != 'free' %}table-light text-muted{% endif %}">
+                    <td>{{ t.seat_row }}</td>
+                    <td>{{ t.seat_number }}</td>
+                    <td><span class="badge bg-secondary">{{ t.category }}</span></td>
+                    <td><strong>{{ t.price }} PLN</strong></td>
+                    <td>
+                        {% if t.status == 'free' %}
+                            <span class="text-success small">Wolny</span>
+                        {% elif t.status == 'reserved' %}
+                            <span class="text-warning small">Zarezerwowany</span>
+                        {% else %}
+                            <span class="text-danger small">Sprzedany</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if t.status == 'free' %}
+                            <a href="{{ url_for('reserve_ticket', ticket_id=t.ticket_id) }}" class="btn btn-primary btn-sm">Zarezerwuj</a>
+                        {% else %}
+                            <button class="btn btn-secondary btn-sm" disabled>Niedostępny</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
