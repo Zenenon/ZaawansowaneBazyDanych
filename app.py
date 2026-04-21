@@ -16,13 +16,13 @@ def get_db_connection():
     )
 
 def cleanup_expired_reservations():
-    """Przeniesienie logiki wygasania rezerwacji do aplikacji."""
+    """Wygasanie rezerwacji – status 'available' zamiast 'free'."""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
         cur.execute('''
-            UPDATE tickets 
-            SET status = 'free', reserved_until = NULL, booking_id = NULL 
+            UPDATE tickets
+            SET status = 'available', reserved_until = NULL, booking_id = NULL
             WHERE status = 'reserved' AND reserved_until < NOW();
         ''')
         conn.commit()
@@ -39,16 +39,15 @@ def shop_index():
     cleanup_expired_reservations()
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    # Pobieramy wydarzenia z informacją o wykonawcach
     cur.execute('''
-                SELECT e.*, v.name as venue_name, STRING_AGG(p.name, ', ') as performers
-                FROM events e
-                         JOIN venues v ON e.venue_id = v.id
-                         LEFT JOIN event_performers ep ON e.id = ep.event_id
-                         LEFT JOIN performers p ON ep.performer_id = p.id
-                GROUP BY e.id, v.name
-                ORDER BY e.date_start
-                ''')
+        SELECT e.*, v.name as venue_name, STRING_AGG(p.name, ', ') as performers
+        FROM events e
+            JOIN venues v ON e.venue_id = v.id
+            LEFT JOIN event_performers ep ON e.id = ep.event_id
+            LEFT JOIN performers p ON ep.performer_id = p.id
+        GROUP BY e.id, v.name
+        ORDER BY e.date_start
+    ''')
     events = cur.fetchall()
     cur.close()
     conn.close()
@@ -61,14 +60,17 @@ def shop_event_details(event_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Pobieramy bilety i dane o miejscach
+    # ZMIANA: s.category → sc.name (join przez seat_categories)
+    # ZMIANA: seat_row::int → seat_row (teraz VARCHAR typu 'R1', 'R2'...)
     cur.execute('''
-                SELECT t.id as ticket_id, t.price, t.status, s.seat_row, s.seat_number, s.category
-                FROM tickets t
-                         JOIN seats s ON t.seat_id = s.id
-                WHERE t.event_id = %s
-                ORDER BY s.seat_row::int, s.seat_number
-                ''', (event_id,))
+        SELECT t.id as ticket_id, t.price, t.status,
+               s.seat_row, s.seat_number, sc.name as category
+        FROM tickets t
+            JOIN seats s ON t.seat_id = s.id
+            JOIN seat_categories sc ON s.category_id = sc.id
+        WHERE t.event_id = %s
+        ORDER BY s.seat_row, s.seat_number
+    ''', (event_id,))
     tickets = cur.fetchall()
 
     cur.execute('SELECT name FROM events WHERE id = %s', (event_id,))
@@ -83,21 +85,19 @@ def shop_event_details(event_id):
 def reserve_ticket(ticket_id):
     conn = get_db_connection()
     cur = conn.cursor()
-    # Rezerwujemy na 10 minut
     reserved_until = datetime.now() + timedelta(minutes=10)
 
+    # ZMIANA: status 'free' → 'available'
     cur.execute('''
-                UPDATE tickets
-                SET status         = 'reserved',
-                    reserved_until = %s
-                WHERE id = %s
-                  AND status = 'free' RETURNING event_id
-                ''', (reserved_until, ticket_id))
+        UPDATE tickets
+        SET status = 'reserved', reserved_until = %s
+        WHERE id = %s AND status = 'available'
+        RETURNING event_id
+    ''', (reserved_until, ticket_id))
 
     result = cur.fetchone()
     if result:
         conn.commit()
-        # Dodajemy do koszyka w sesji
         if 'cart' not in session:
             session['cart'] = []
         session['cart'].append(ticket_id)
@@ -116,15 +116,14 @@ def view_cart():
 
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
-    # Pobieramy dane biletów z koszyka, które nadal są zarezerwowane
     cur.execute('''
-                SELECT t.id, t.price, e.name as event_name, s.seat_row, s.seat_number, t.reserved_until
-                FROM tickets t
-                         JOIN events e ON t.event_id = e.id
-                         JOIN seats s ON t.seat_id = s.id
-                WHERE t.id = ANY (%s)
-                  AND t.status = 'reserved'
-                ''', (session['cart'],))
+        SELECT t.id, t.price, e.name as event_name,
+               s.seat_row, s.seat_number, t.reserved_until
+        FROM tickets t
+            JOIN events e ON t.event_id = e.id
+            JOIN seats s ON t.seat_id = s.id
+        WHERE t.id = ANY(%s) AND t.status = 'reserved'
+    ''', (session['cart'],))
     tickets = cur.fetchall()
     cur.close()
     conn.close()
@@ -138,54 +137,46 @@ def buy_tickets():
 
     conn = get_db_connection()
     cur = conn.cursor()
-    # Finalizujemy: status 'sold' (lub inny z Twojej logiki, np. 'paid')
     cur.execute('''
-                UPDATE tickets
-                SET status         = 'sold',
-                    reserved_until = NULL
-                WHERE id = ANY (%s)
-                  AND status = 'reserved'
-                ''', (session['cart'],))
+        UPDATE tickets
+        SET status = 'sold', reserved_until = NULL
+        WHERE id = ANY(%s) AND status = 'reserved'
+    ''', (session['cart'],))
 
     conn.commit()
-    session['cart'] = []  # Czyścimy koszyk
+    session['cart'] = []
     cur.close()
     conn.close()
     return "<h3>Dziękujemy za zakup! Twoje bilety zostały wygenerowane.</h3><a href='/shop'>Powrót</a>"
 
-# --- GŁÓWNY PANEL (DASHBOARD) ---
-# 1. Strona Główna (Dashboard) - tylko podgląd
+
+# --- GŁÓWNY PANEL ---
+
 @app.route('/')
 def index():
     cleanup_expired_reservations()
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # 1. Pobieramy wydarzenia
     cur.execute('''
-        SELECT 
-            e.id, 
-            e.name, 
-            v.name as venue_name, 
-            e.date_start, 
-            e.date_end, 
-            e.description,
+        SELECT
+            e.id, e.name, v.name as venue_name,
+            e.date_start, e.date_end, e.description,
             STRING_AGG(p.name, ', ') as performers,
-            (SELECT count(*) FROM tickets t WHERE t.event_id = e.id AND t.status = 'free') as available
+            (SELECT COUNT(*) FROM tickets t
+             WHERE t.event_id = e.id AND t.status = 'available') as available
         FROM events e
-        JOIN venues v ON e.venue_id = v.id
-        LEFT JOIN event_performers ep ON e.id = ep.event_id
-        LEFT JOIN performers p ON ep.performer_id = p.id
+            JOIN venues v ON e.venue_id = v.id
+            LEFT JOIN event_performers ep ON e.id = ep.event_id
+            LEFT JOIN performers p ON ep.performer_id = p.id
         GROUP BY e.id, v.name, e.name, e.date_start, e.date_end, e.description
         ORDER BY e.date_start;
-                ''')
+    ''')
     wydarzenia = cur.fetchall()
 
-    # 2. POBIERAMY LOKALIZACJE (potrzebne do listy rozwijanej w formularzu)
     cur.execute('SELECT id, name FROM venues ORDER BY name')
     venues = cur.fetchall()
 
-    # 3. Pobranie listy wykonawców
     cur.execute('SELECT id, name FROM performers ORDER BY name')
     all_performers = cur.fetchall()
 
@@ -193,7 +184,7 @@ def index():
     conn.close()
     return render_template('index.html', wydarzenia=wydarzenia, venues=venues, all_performers=all_performers)
 
-# 2. Nowa funkcja obsługująca podstronę events.html
+
 @app.route('/events_management')
 def events_management():
     conn = get_db_connection()
@@ -203,7 +194,8 @@ def events_management():
     cur.close()
     conn.close()
     return render_template('events.html', wydarzenia=wydarzenia)
-# --- ZARZĄDZANIE WYDARZENIAMI ---
+
+
 @app.route('/create_event', methods=['POST'])
 def create_event():
     name = request.form['name']
@@ -211,38 +203,44 @@ def create_event():
     date_start = request.form['date_start']
     date_end = request.form.get('date_end') or None
     description = request.form.get('description') or ""
-
     performer_ids = request.form.getlist('performers')
 
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # 1. Tworzymy wydarzenie
         cur.execute('''
-                    INSERT INTO events (name, venue_id, date_start, date_end, description)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING id
-                    ''', (name, venue_id, date_start, date_end, description))
+            INSERT INTO events (name, venue_id, date_start, date_end, description)
+            VALUES (%s, %s, %s, %s, %s) RETURNING id
+        ''', (name, venue_id, date_start, date_end, description))
         event_id = cur.fetchone()[0]
 
-        # 2. Zapisujemy powiązania z wykonawcami (Tabela łącząca)
         for p_id in performer_ids:
-            cur.execute('INSERT INTO event_performers (event_id, performer_id) VALUES (%s, %s)',
-                        (event_id, p_id))
+            cur.execute(
+                'INSERT INTO event_performers (event_id, performer_id) VALUES (%s, %s)',
+                (event_id, p_id)
+            )
 
-        # 2. Szukamy w danych z formularza wszystkich pól zaczynających się od 'price_'
+        # ZMIANA: key to 'price_{category_id}' (id zamiast nazwy)
+        # ZMIANA: INSERT do event_category_prices używa category_id (int)
+        # ZMIANA: bilety generowane przez JOIN z seat_categories po id
+        # ZMIANA: trigger trg_fill_ticket_price uzupełni cenę automatycznie,
+        #         ale wstawiamy price=0 jako placeholder (trigger to nadpisze)
         for key in request.form:
             if key.startswith('price_'):
-                category_name = key.replace('price_', '')
+                category_id = int(key.replace('price_', ''))
                 price = request.form[key]
 
-                # 3. Generujemy bilety dla tej konkretnej kategorii
                 cur.execute('''
-                            INSERT INTO tickets (event_id, seat_id, price, status)
-                            SELECT %s, id, %s, 'free'
-                            FROM seats
-                            WHERE venue_id = %s
-                              AND category = %s
-                            ''', (event_id, price, venue_id, category_name))
+                    INSERT INTO event_category_prices (event_id, category_id, price)
+                    VALUES (%s, %s, %s)
+                ''', (event_id, category_id, price))
+
+                cur.execute('''
+                    INSERT INTO tickets (event_id, seat_id, price, status)
+                    SELECT %s, s.id, 0, 'available'
+                    FROM seats s
+                    WHERE s.venue_id = %s AND s.category_id = %s
+                ''', (event_id, venue_id, category_id))
 
         conn.commit()
     except Exception as e:
@@ -253,12 +251,13 @@ def create_event():
         conn.close()
 
     return redirect(url_for('index'))
+
+
 @app.route('/usun/<int:event_id>')
 def delete_event(event_id):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Usunięcie biletów (dzieci) przed wydarzeniem (rodzicem) zapewnia integralność [cite: 58, 63]
         cur.execute('DELETE FROM tickets WHERE event_id = %s', (event_id,))
         cur.execute('DELETE FROM events WHERE id = %s', (event_id,))
         conn.commit()
@@ -270,7 +269,9 @@ def delete_event(event_id):
         conn.close()
     return redirect(url_for('index'))
 
-# --- ZARZĄDZANIE WYKONAWCAMI I LOKALIZACJAMI ---
+
+# --- WYKONAWCY I LOKALIZACJE ---
+
 @app.route('/performers', methods=['GET', 'POST'])
 def manage_performers():
     conn = get_db_connection()
@@ -293,26 +294,33 @@ def manage_venues():
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
     if request.method == 'POST':
-        # 1. Pobieramy dane o sali
         name = request.form['name']
         address = request.form['address']
         rows = int(request.form['rows'])
         cols = int(request.form['cols'])
+        # ZMIANA: formularz powinien też przekazywać nazwę domyślnej kategorii
+        default_category = request.form.get('default_category', 'Standard')
 
         try:
-            # 2. Wstawiamy lokalizację i pobieramy jej ID
             cur.execute(
                 'INSERT INTO venues (name, address) VALUES (%s, %s) RETURNING id',
                 (name, address)
             )
             venue_id = cur.fetchone()['id']
 
-            # 3. Automatycznie generujemy siatkę miejsc (domyślnie 'Standard')
+            # ZMIANA: tworzymy domyślną kategorię dla nowego venue
+            cur.execute(
+                'INSERT INTO seat_categories (venue_id, name) VALUES (%s, %s) RETURNING id',
+                (venue_id, default_category)
+            )
+            category_id = cur.fetchone()['id']
+
+            # ZMIANA: seats używają category_id zamiast category (varchar)
             for r in range(1, rows + 1):
                 for c in range(1, cols + 1):
                     cur.execute(
-                        'INSERT INTO seats (venue_id, seat_row, seat_number, category) VALUES (%s, %s, %s, %s)',
-                        (venue_id, str(r), c, '')
+                        'INSERT INTO seats (venue_id, seat_row, seat_number, category_id) VALUES (%s, %s, %s, %s)',
+                        (venue_id, str(r), c, category_id)
                     )
 
             conn.commit()
@@ -321,29 +329,34 @@ def manage_venues():
             conn.rollback()
             print(f"Błąd tworzenia sali: {e}")
 
-    # Pobieranie danych do wyświetlenia (bez zmian)
     cur.execute('SELECT * FROM venues ORDER BY id')
     venues = cur.fetchall()
-    cur.execute('SELECT DISTINCT category FROM seats ORDER BY category')
-    existing_categories = [row['category'] for row in cur.fetchall()]
+
+    # ZMIANA: kategorie pobieramy z seat_categories, nie z seats.category
+    cur.execute('SELECT id, name, venue_id FROM seat_categories ORDER BY name')
+    existing_categories = cur.fetchall()
 
     cur.close()
     conn.close()
     return render_template('venues.html', venues=venues, existing_categories=existing_categories)
+
+
 @app.route('/add_seats', methods=['POST'])
 def add_seats():
     venue_id = request.form['venue_id']
     rows = int(request.form['rows'])
     numbers = int(request.form['numbers'])
-    category = request.form['category'] # Pobieramy kategorię z formularza
+    # ZMIANA: przyjmujemy category_id (int) zamiast nazwy kategorii
+    category_id = int(request.form['category_id'])
 
     conn = get_db_connection()
     cur = conn.cursor()
     for r in range(1, rows + 1):
         for n in range(1, numbers + 1):
-            # Zapisujemy miejsce wraz z jego kategorią [cite: 36, 40]
-            cur.execute('INSERT INTO seats (venue_id, seat_row, seat_number, category) VALUES (%s, %s, %s, %s)',
-                        (venue_id, str(r), n, category))
+            cur.execute(
+                'INSERT INTO seats (venue_id, seat_row, seat_number, category_id) VALUES (%s, %s, %s, %s)',
+                (venue_id, str(r), n, category_id)
+            )
     conn.commit()
     cur.close()
     conn.close()
@@ -356,8 +369,11 @@ def prepare_event():
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Pobieramy TYLKO te kategorie, które faktycznie są w tej sali
-    cur.execute('SELECT DISTINCT category FROM seats WHERE venue_id = %s', (venue_id,))
+    # ZMIANA: pobieramy kategorie z seat_categories (id + name) zamiast DISTINCT category z seats
+    cur.execute(
+        'SELECT id, name FROM seat_categories WHERE venue_id = %s ORDER BY name',
+        (venue_id,)
+    )
     categories = cur.fetchall()
 
     cur.execute('SELECT name FROM venues WHERE id = %s', (venue_id,))
@@ -379,46 +395,52 @@ def confirm_event():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # 1. Dodaj wydarzenie
-    cur.execute('INSERT INTO events (name, venue_id, date_start) VALUES (%s, %s, NOW()) RETURNING id', (name, venue_id))
+    cur.execute(
+        'INSERT INTO events (name, venue_id, date_start) VALUES (%s, %s, NOW()) RETURNING id',
+        (name, venue_id)
+    )
     event_id = cur.fetchone()[0]
 
-    # 2. Przejdź przez wszystkie przesłane pola i wyciągnij ceny
+    # ZMIANA: key to 'price_{category_id}', INSERT używa category_id
     for key in request.form:
         if key.startswith('price_'):
-            category_name = key.replace('price_', '')
+            category_id = int(key.replace('price_', ''))
             price = request.form[key]
 
-            # Dodaj cenę do tabeli cennika
-            cur.execute('INSERT INTO event_category_prices (event_id, category_name, price) VALUES (%s, %s, %s)',
-                        (event_id, category_name, price))
+            cur.execute(
+                'INSERT INTO event_category_prices (event_id, category_id, price) VALUES (%s, %s, %s)',
+                (event_id, category_id, price)
+            )
 
-            # Wygeneruj bilety dla tej kategorii w tym wydarzeniu
+            # trigger trg_fill_ticket_price nadpisze price=0 właściwą wartością
             cur.execute('''
-                        INSERT INTO tickets (event_id, seat_id, price, status)
-                        SELECT %s, id, %s, 'free'
-                        FROM seats
-                        WHERE venue_id = %s
-                          AND category = %s
-                        ''', (event_id, price, venue_id, category_name))
+                INSERT INTO tickets (event_id, seat_id, price, status)
+                SELECT %s, s.id, 0, 'available'
+                FROM seats s
+                WHERE s.venue_id = %s AND s.category_id = %s
+            ''', (event_id, venue_id, category_id))
 
     conn.commit()
     cur.close()
     conn.close()
     return redirect(url_for('index'))
 
+
+# ZMIANA: zwracamy {id, name} zamiast samej nazwy
 @app.route('/api/categories/<int:venue_id>')
 def get_categories(venue_id):
     conn = get_db_connection()
-    cur = conn.cursor()
-    # Pobieramy unikalne kategorie dla danej sali
-    cur.execute('SELECT DISTINCT category FROM seats WHERE venue_id = %s', (venue_id,))
-    categories = [row[0] for row in cur.fetchall()]
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        'SELECT id, name FROM seat_categories WHERE venue_id = %s ORDER BY name',
+        (venue_id,)
+    )
+    categories = cur.fetchall()
     cur.close()
     conn.close()
     return jsonify(categories)
 
-# UPDATE: Edycja nazwy wykonawcy
+
 @app.route('/edit_performer/<int:performer_id>', methods=['POST'])
 def edit_performer(performer_id):
     new_name = request.form['name']
@@ -435,26 +457,23 @@ def edit_performer(performer_id):
         conn.close()
     return redirect(url_for('manage_performers'))
 
-# DELETE: Usuwanie wykonawcy
+
 @app.route('/delete_performer/<int:performer_id>')
 def delete_performer(performer_id):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # UWAGA: Jeśli wykonawca jest przypisany do wydarzenia,
-        # baza może zablokować usunięcie (Klucz Obcy).
         cur.execute('DELETE FROM performers WHERE id = %s', (performer_id,))
         conn.commit()
     except Exception as e:
         conn.rollback()
-        # Tu można by dodać informację dla użytkownika, że wykonawca ma przypisane koncerty
         print(f"Błąd usuwania wykonawcy: {e}")
     finally:
         cur.close()
         conn.close()
     return redirect(url_for('manage_performers'))
 
-# UPDATE: Edycja danych lokalizacji (Nazwa, Adres)
+
 @app.route('/edit_venue/<int:venue_id>', methods=['POST'])
 def edit_venue(venue_id):
     name = request.form['name']
@@ -462,8 +481,10 @@ def edit_venue(venue_id):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cur.execute('UPDATE venues SET name = %s, address = %s WHERE id = %s',
-                    (name, address, venue_id))
+        cur.execute(
+            'UPDATE venues SET name = %s, address = %s WHERE id = %s',
+            (name, address, venue_id)
+        )
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -473,13 +494,12 @@ def edit_venue(venue_id):
         conn.close()
     return redirect(url_for('manage_venues'))
 
-# DELETE: Usuwanie lokalizacji
+
 @app.route('/delete_venue/<int:venue_id>')
 def delete_venue(venue_id):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # PAMIĘTAJ: To usunie też wszystkie miejsca (seats) przypisane do tej sali!
         cur.execute('DELETE FROM venues WHERE id = %s', (venue_id,))
         conn.commit()
     except Exception as e:
@@ -490,7 +510,7 @@ def delete_venue(venue_id):
         conn.close()
     return redirect(url_for('manage_venues'))
 
-# DELETE SEATS: Czyszczenie układu miejsc (aby stworzyć nowy)
+
 @app.route('/clear_seats/<int:venue_id>')
 def clear_seats(venue_id):
     conn = get_db_connection()
@@ -507,55 +527,60 @@ def clear_seats(venue_id):
     return redirect(url_for('manage_venues'))
 
 
-# Widok szczegółowy układu sali
 @app.route('/venue_layout/<int:venue_id>')
 def venue_layout(venue_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Pobieramy dane o sali
     cur.execute('SELECT name FROM venues WHERE id = %s', (venue_id,))
     venue = cur.fetchone()
 
-    # Pobieramy wszystkie miejsca, pogrupowane rzędami
+    # ZMIANA: JOIN z seat_categories zamiast s.category
+    # ZMIANA: seat_row to VARCHAR (R1, R2...) – usunięto ::integer cast
     cur.execute('''
-                SELECT seat_row, category, COUNT(*) as count, MIN(seat_number) as min_num, MAX(seat_number) as max_num
-                FROM seats
-                WHERE venue_id = %s
-                GROUP BY seat_row, category
-                ORDER BY seat_row:: integer
-                ''', (venue_id,))
+        SELECT s.seat_row, sc.name as category, sc.id as category_id,
+               COUNT(*) as count,
+               MIN(s.seat_number) as min_num,
+               MAX(s.seat_number) as max_num
+        FROM seats s
+            JOIN seat_categories sc ON s.category_id = sc.id
+        WHERE s.venue_id = %s
+        GROUP BY s.seat_row, sc.name, sc.id
+        ORDER BY s.seat_row
+    ''', (venue_id,))
     layout = cur.fetchall()
 
-    # Lista kategorii do selecta
-    cur.execute('SELECT DISTINCT category FROM seats WHERE category IS NOT NULL ORDER BY category')
-    categories = [row['category'] for row in cur.fetchall()]
+    # ZMIANA: kategorie z seat_categories (id + name)
+    cur.execute(
+        'SELECT id, name FROM seat_categories WHERE venue_id = %s ORDER BY name',
+        (venue_id,)
+    )
+    categories = cur.fetchall()
 
     cur.close()
     conn.close()
-    return render_template('venue_layout.html', venue=venue, venue_id=venue_id, layout=layout, categories=categories)
+    return render_template('venue_layout.html', venue=venue, venue_id=venue_id,
+                           layout=layout, categories=categories)
 
 
-# Akcja: Masowa zmiana kategorii dla zakresu rzędów
 @app.route('/update_seats_batch/<int:venue_id>', methods=['POST'])
 def update_seats_batch(venue_id):
     row_start = request.form['row_start']
     row_end = request.form['row_end']
-    # Tutaj pobierasz dane z formularza:
-    new_category = request.form['new_category']
+    # ZMIANA: przyjmujemy category_id (int) zamiast nazwy
+    new_category_id = int(request.form['new_category_id'])
 
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # W zapytaniu SQL musisz użyć tej samej nazwy: new_category
+        # ZMIANA: SET category_id zamiast SET category
+        # ZMIANA: seat_row to tekst 'R1','R2'... – porównujemy po SUBSTRING numerycznym
         cur.execute('''
-                    UPDATE seats
-                    SET category = %s
-                    WHERE venue_id = %s
-                      AND seat_row::integer BETWEEN %s
-                      AND %s
-                    ''', (new_category, venue_id, row_start, row_end))
-
+            UPDATE seats
+            SET category_id = %s
+            WHERE venue_id = %s
+              AND SUBSTRING(seat_row FROM 2)::integer BETWEEN %s AND %s
+        ''', (new_category_id, venue_id, row_start, row_end))
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -564,6 +589,7 @@ def update_seats_batch(venue_id):
         cur.close()
         conn.close()
     return redirect(url_for('venue_layout', venue_id=venue_id))
+
 
 if __name__ == '__main__':
     app.run(debug=True)
