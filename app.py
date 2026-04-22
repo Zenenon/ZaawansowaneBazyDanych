@@ -37,22 +37,41 @@ def cleanup_expired_reservations():
 @app.route('/shop')
 def shop_index():
     cleanup_expired_reservations()
+
+    #dodanie paginacji, podział na strony
+    page = request.args.get('page', 1, type=int)
+    per_page = 12
+    offset = (page - 1) * per_page
+
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    #liczba stron w sklepie
+    cur.execute('SELECT COUNT(*) FROM events')
+    total_events = cur.fetchone()['count']
+    total_pages = (total_events + per_page - 1) //per_page
+    # Wyraźnie wymieniamy kolumny zamiast e.* i dodajemy je do GROUP BY
     cur.execute('''
-        SELECT e.*, v.name as venue_name, STRING_AGG(p.name, ', ') as performers
+        SELECT 
+            e.id, 
+            e.name, 
+            e.date_start, 
+            e.date_end, 
+            e.description, 
+            v.name as venue_name, 
+            STRING_AGG(p.name, ', ') as performers
         FROM events e
             JOIN venues v ON e.venue_id = v.id
             LEFT JOIN event_performers ep ON e.id = ep.event_id
             LEFT JOIN performers p ON ep.performer_id = p.id
-        GROUP BY e.id, v.name
+        GROUP BY e.id, v.name, e.name, e.date_start, e.date_end, e.description
         ORDER BY e.date_start
-    ''')
+        LIMIT %s OFFSET %s
+    ''', (per_page, offset))
     events = cur.fetchall()
     cur.close()
     conn.close()
-    return render_template('shop_index.html', events=events)
-
+    return render_template('shop_index.html', events=events, page=page, total_pages=total_pages, endpoint='shop_index')
 
 @app.route('/shop/event/<int:event_id>')
 def shop_event_details(event_id):
@@ -60,26 +79,37 @@ def shop_event_details(event_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
 
-    # ZMIANA: s.category → sc.name (join przez seat_categories)
-    # ZMIANA: seat_row::int → seat_row (teraz VARCHAR typu 'R1', 'R2'...)
+    # ZMIANA: Pobieramy ecp.price zamiast t.price
+    # ZMIANA: Dodany JOIN z event_category_prices na podstawie event_id i category_id
     cur.execute('''
-        SELECT t.id as ticket_id, t.price, t.status,
-               s.seat_row, s.seat_number, sc.name as category
-        FROM tickets t
-            JOIN seats s ON t.seat_id = s.id
-            JOIN seat_categories sc ON s.category_id = sc.id
-        WHERE t.event_id = %s
-        ORDER BY s.seat_row, s.seat_number
-    ''', (event_id,))
+                SELECT DISTINCT
+                ON (t.id)
+                    t.id as ticket_id,
+                    ecp.price,
+                    t.status,
+                    s.seat_row,
+                    s.seat_number,
+                    sc.name as category
+                FROM tickets t
+                    JOIN seats s
+                ON t.seat_id = s.id
+                    JOIN seat_categories sc ON s.category_id = sc.id
+                    LEFT JOIN event_category_prices ecp ON (
+                    ecp.event_id = t.event_id AND
+                    ecp.category_id = s.category_id
+                    )
+                WHERE t.event_id = %s
+                ORDER BY t.id, s.seat_row, s.seat_number
+                ''', (event_id,))
     tickets = cur.fetchall()
 
     cur.execute('SELECT name FROM events WHERE id = %s', (event_id,))
-    event_name = cur.fetchone()['name']
+    event_data = cur.fetchone()
+    event_name = event_data['name'] if event_data else "Nieznane wydarzenie"
 
     cur.close()
     conn.close()
     return render_template('shop_event.html', tickets=tickets, event_name=event_name, event_id=event_id)
-
 
 @app.route('/shop/reserve/<int:ticket_id>')
 def reserve_ticket(ticket_id):
@@ -155,8 +185,19 @@ def buy_tickets():
 @app.route('/')
 def index():
     cleanup_expired_reservations()
+
+    #Pobranie numeru storny z adresu ULR
+    page = request.args.get('page', 1, type=int)
+    per_page = 10 #liczba koncertów na stronie
+    offset = (page -1) * per_page
+
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    #Pobranie liczby koncertów do obliczenia liczby stron
+    cur.execute('SELECT COUNT(*) FROM events')
+    total_events = cur.fetchone()['count']
+    total_pages = (total_events + per_page -1) // per_page
 
     cur.execute('''
         SELECT
@@ -170,8 +211,9 @@ def index():
             LEFT JOIN event_performers ep ON e.id = ep.event_id
             LEFT JOIN performers p ON ep.performer_id = p.id
         GROUP BY e.id, v.name, e.name, e.date_start, e.date_end, e.description
-        ORDER BY e.date_start;
-    ''')
+        ORDER BY e.date_start
+        LIMIT %s OFFSET %s;
+    ''', (per_page, offset))
     wydarzenia = cur.fetchall()
 
     cur.execute('SELECT id, name FROM venues ORDER BY name')
@@ -182,7 +224,7 @@ def index():
 
     cur.close()
     conn.close()
-    return render_template('index.html', wydarzenia=wydarzenia, venues=venues, all_performers=all_performers)
+    return render_template('index.html', wydarzenia=wydarzenia, venues=venues, all_performers=all_performers, page = page, total_pages=total_pages, endpoint='index')
 
 
 @app.route('/events_management')
@@ -275,23 +317,46 @@ def delete_event(event_id):
 @app.route('/performers', methods=['GET', 'POST'])
 def manage_performers():
     conn = get_db_connection()
+
+    #dodanie paginacji
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    offset = (page - 1) * per_page
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # liczba stron w sklepie
+    cur.execute('SELECT COUNT(*) FROM performers')
+    total_performers = cur.fetchone()['count']
+    total_pages = (total_performers + per_page - 1) // per_page
+
     if request.method == 'POST':
         name = request.form['name']
         cur.execute('INSERT INTO performers (name) VALUES (%s)', (name,))
         conn.commit()
         return redirect(url_for('manage_performers'))
-    cur.execute('SELECT * FROM performers ORDER BY name')
+    cur.execute('SELECT * FROM performers ORDER BY name LIMIT %s OFFSET %s', (per_page, offset))
     data = cur.fetchall()
     cur.close()
     conn.close()
-    return render_template('performers.html', performers=data)
+    return render_template('performers.html', performers=data, page=page, total_pages=total_pages, endpoint='manage_performers')
 
 
 @app.route('/venues', methods=['GET', 'POST'])
 def manage_venues():
     conn = get_db_connection()
+
+    # dodanie paginacji
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    offset = (page - 1) * per_page
+
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    # liczba stron w sklepie
+    cur.execute('SELECT COUNT(*) FROM venues')
+    total_venues = cur.fetchone()['count']
+    total_pages = (total_venues + per_page - 1) // per_page
 
     if request.method == 'POST':
         name = request.form['name']
@@ -329,7 +394,7 @@ def manage_venues():
             conn.rollback()
             print(f"Błąd tworzenia sali: {e}")
 
-    cur.execute('SELECT * FROM venues ORDER BY id')
+    cur.execute('SELECT * FROM venues ORDER BY id LIMIT %s OFFSET %s', (per_page, offset))
     venues = cur.fetchall()
 
     # ZMIANA: kategorie pobieramy z seat_categories, nie z seats.category
@@ -338,7 +403,7 @@ def manage_venues():
 
     cur.close()
     conn.close()
-    return render_template('venues.html', venues=venues, existing_categories=existing_categories)
+    return render_template('venues.html', venues=venues, existing_categories=existing_categories, page=page, total_pages=total_pages, endpoint='manage_venues')
 
 
 @app.route('/add_seats', methods=['POST'])

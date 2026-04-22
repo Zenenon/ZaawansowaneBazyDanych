@@ -2,7 +2,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2>Wybierz bilet na: {{ event_name }}</h2>
-    <a href="{{ url_for('view_cart') }}" class="btn btn-outline-primary">🛒 Mój koszyk</a>
+    <a href="{{ url_for('view_cart') }}" class="btn btn-outline-primary">Mój koszyk</a>
 </div>
 
 <div class="card shadow-sm">
@@ -20,13 +20,13 @@
             </thead>
             <tbody>
                 {% for t in tickets %}
-                <tr class="{% if t.status != 'free' %}table-light text-muted{% endif %}">
+                <tr class="{% if t.status != 'available' %}table-light text-muted{% endif %}">
                     <td>{{ t.seat_row }}</td>
                     <td>{{ t.seat_number }}</td>
                     <td><span class="badge bg-secondary">{{ t.category }}</span></td>
                     <td><strong>{{ t.price }} PLN</strong></td>
                     <td>
-                        {% if t.status == 'free' %}
+                        {% if t.status == 'available' %}
                             <span class="text-success small">Wolny</span>
                         {% elif t.status == 'reserved' %}
                             <span class="text-warning small">Zarezerwowany</span>
@@ -35,7 +35,7 @@
                         {% endif %}
                     </td>
                     <td>
-                        {% if t.status == 'free' %}
+                        {% if t.status == 'available' %}
                             <a href="{{ url_for('reserve_ticket', ticket_id=t.ticket_id) }}" class="btn btn-primary btn-sm">Zarezerwuj</a>
                         {% else %}
                             <button class="btn btn-secondary btn-sm" disabled>Niedostępny</button>

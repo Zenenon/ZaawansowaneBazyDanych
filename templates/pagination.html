@@ -1,0 +1,23 @@
+<nav aria-label="Nawigacja stronami" class="mt-4">
+    <ul class="pagination justify-content-center">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for(endpoint, page=page-1) }}">Poprzednia</a>
+        </li>
+
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == page %}
+                <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+            {% elif p > page - 3 and p < page + 3 %}
+                <li class="page-item">
+                    <a class="page-link" href="{{ url_for(endpoint, page=p) }}">{{ p }}</a>
+                </li>
+            {% elif p == 1 or p == total_pages %}
+                <li class="page-item"><a class="page-link" href="{{ url_for(endpoint, page=p) }}">{{ p }}</a></li>
+            {% endif %}
+        {% endfor %}
+
+        <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for(endpoint, page=page+1) }}">Następna</a>
+        </li>
+    </ul>
+</nav>
