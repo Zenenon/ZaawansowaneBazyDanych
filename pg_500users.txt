@@ -1,0 +1,7 @@
+ sr_ms | calls |                           kwerenda                           
+-------+-------+--------------------------------------------------------------
+ 44.46 |   257 | SELECT e.*, v.name as venue_name, STRING_AGG(p.name, $1) as 
+  0.00 |   258 | ROLLBACK
+  0.00 |   261 | BEGIN
+(3 rows)
+
